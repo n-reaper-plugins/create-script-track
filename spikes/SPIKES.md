@@ -1,0 +1,21 @@
+# Real-REAPER spikes
+
+The offline tests run against `tools/mock_reaper.lua`, which *assumes* the REAPER behaviours below. **None of them has been
+confirmed in real REAPER yet.** `spike_1_probe.lua` checks S1 to S4 automatically (and cleans up after itself): run it as a
+ReaScript in a scratch project and read the report in the console. The rest need a few manual steps.
+
+| # | Assumption | How to check | If it is wrong |
+|---|---|---|---|
+| S1 | Project ext-state keeps a 4 000-character single-line value (quotes, braces, backslashes, en dash), a leading `\|` and edge spaces; an empty value deletes the key; 60 chunks (240 KB) work | probe | Smaller chunks (`C.chunks` size); if values get trimmed or mangled, change the escaping in `CSTCore.escape` |
+| S2 | `EnumProjectMarkers3` returns `0` past the end; `SetProjectMarker4(proj, idx, false, pos, 0, name, color, 0)` moves **and** renames a marker found by its displayed number | probe | Adjust `RA.markers` / `RA.move_marker` |
+| S3 | An item from `AddMediaItemToTrack` (no take) accepts `P_NOTES`, `P_EXT`, `I_CUSTOMCOLOR`, and **shows its notes as text in the arrange view** | probe + look at the arrange view | If notes are not drawn, put the text in an empty-MIDI take name instead, or use `P_NOTES` with "show item notes" / the item-notes view |
+| S4 | `GetPlayPosition2`, `GetCursorPosition`, `GetPlayState`, `EnumProjects(-1)` behave as used by the follow logic and the project-tab switch | probe | Use `GetPlayPosition` if the latency-compensated value drifts |
+| S5 | Track / item `P_EXT`, markers and notes are part of the **undo snapshot**, so in "One step per edit" Ctrl+Z restores the state before your edit and the next sync derives the same result | Switch the comment track on, move a marker, Ctrl+Z twice; the track and its tag must disappear with the first undo that reaches the toggle. Same check for Set / Clear | Silent mode would lose tags on undo: keep the comment-track identity in project ext-state as a fallback |
+| S6 | `GetProjectStateChangeCount` does **not** change during playback or when only the edit cursor moves | Watch `app.pending` (or add a print in `App:tick`) while playing | The debounce still limits work to one scan per 0.3 s; cheap enough, but check CPU while playing a long project |
+| S7 | ReaImGui: `SetScrollHereY` inside `BeginChild`, `SetWindowFontScale` (guarded: Prompter is just not enlarged without it), `Selectable`, `BeginDragDropTarget` + `AcceptDragDropPayloadFiles` | Open the window; drop a `.md` on it; play across two cues and watch the preview scroll | Adjust per ReaImGui version (the script only uses calls guarded by `r.ImGui_*` lookups where versions differ) |
+| S8 | `JS_Dialog_BrowseForOpenFiles(caption, folder, file, filterList, false)` returns `1, path`; without js_ReaScriptAPI `GetUserFileNameForRead` works | Press *Choose file…* with and without the extension | Fix the call; typing a path and drag & drop always work |
+| S9 | Inserting the comment track at index 0 does not disturb folder structure | Switch the track on in a project whose first track is a folder parent | Insert after the last top-level track instead |
+| S11 | `I_CUSTOMCOLOR | 0x1000000` on a **track** and on **items** is shown in the arrange view and mixer; 0 returns to the default. `ImGui_ColorButton` takes `0xRRGGBBAA`, `ImGui_ColorEdit3` takes and returns `0xRRGGBB` | probe (track colour round trip) + switch the comment track on and pick a colour | If `ColorEdit3` returns BGR or with alpha, convert in `CSTUI.draw_comments` |
+| S12 | Opening a project saved by 0.1.0 (old section name, old track/item tags): link, copy, settings and comment track are taken over, no second track | Save a project with 0.1.0 and the comment track on, then open it with the renamed script | Check `GetProjExtState` with the old section name; `RA.LEGACY` |
+| S13 | `SetProjExtState(0, section, "", "")` removes the whole old section | After S12, save and inspect the .rpp: no old section left | The old data stays in the file (harmless) |
+| S10 | Many markers: one scan with 500 markers and a 400-cue file stays well under ~20 ms | Time `app:sync()` with `reaper.time_precise` | Scan only when marker count / names changed |
